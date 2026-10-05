@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bullex Signal — Dados reais</title>
+<style>
+:root{--bg:#0b1020;--card:#121a2e;--muted:#8e9ab3;--text:#f4f7ff;--green:#25d695;--red:#ff5b6e;--yellow:#f7c948;--line:#25304a}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(160deg,#09101d,#111a31);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:1050px;margin:auto;padding:18px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
+h1{font-size:22px;margin:0}.sub{color:var(--muted);font-size:12px}.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.select,.btn{background:#18233b;border:1px solid var(--line);color:var(--text);padding:9px 12px;border-radius:9px}.btn{cursor:pointer}.btn:hover{filter:brightness(1.15)}
+.data-status{font-size:12px;font-weight:800;padding:8px 10px;border-radius:999px;background:#0e1628}.live{color:var(--green)}.loading{color:var(--yellow)}.error{color:var(--red)}
+.source{font-size:11px;color:var(--muted);margin:6px 0 12px}.source b{color:var(--text)}
+.grid{display:grid;grid-template-columns:1.55fr .8fr;gap:14px}.card{background:rgba(18,26,46,.94);border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:0 10px 30px #0003}.chartcard{min-height:500px}
+canvas{width:100%;height:420px;display:block;background:#0c1324;border-radius:10px}.signal{display:flex;align-items:center;justify-content:center;min-height:150px;border-radius:12px;margin-bottom:12px;font-weight:900;text-align:center}.buy{background:#0b3d30;color:var(--green);border:1px solid #1b8b68}.sell{background:#481b27;color:var(--red);border:1px solid #a9364b}.wait{background:#493d15;color:var(--yellow);border:1px solid #9b7e1e}.big{font-size:34px}.score{font-size:14px;margin-top:6px}.checks{display:grid;gap:8px}.check{display:flex;justify-content:space-between;padding:9px 10px;background:#0e1628;border-radius:8px;font-size:13px}.ok{color:var(--green)}.no{color:var(--red)}.warn{color:var(--yellow)}
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}.metric{background:#0e1628;border-radius:9px;padding:10px}.metric b{display:block;font-size:18px}.metric span{font-size:11px;color:var(--muted)}
+.log{margin-top:14px}.row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;padding:9px;border-bottom:1px solid var(--line);font-size:12px}.row.head{color:var(--muted)}
+.note{color:var(--muted);font-size:11px;line-height:1.45;margin-top:12px}.errorbox{display:none;margin-top:10px;padding:10px;border-radius:9px;background:#2b1520;color:#ffb2bd;font-size:12px;line-height:1.4}
+@media(max-width:780px){.grid{grid-template-columns:1fr}.chartcard{min-height:0}canvas{height:330px}.top{align-items:flex-start;flex-direction:column}.controls{width:100%}.select,.btn{flex:1}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div><h1>Bullex Signal</h1><div class="sub">Dados reais de mercado — análise, não executa ordens</div></div>
+    <div id="dataStatus" class="data-status loading">● CARREGANDO...</div>
+    <div class="controls">
+      <select id="asset" class="select"><option>EUR/USD</option><option>GBP/USD</option><option>USD/JPY</option><option>BTC/USD</option></select>
+      <select id="tf" class="select"><option value="1">1 min</option><option value="5">5 min</option><option value="15">15 min</option></select>
+      <button class="btn" onclick="newData()">↻ Atualizar</button>
+    </div>
+  </div>
+
+  <div class="source">Fonte: <b>Biquote</b> • Símbolo: <b id="sourceSymbol">—</b> • Intervalo: <b id="sourceTf">—</b> • Cotação: <b id="quotePrice">—</b></div>
+  <div id="errorBox" class="errorbox"></div>
+
+  <div class="grid">
+    <section class="card chartcard">
+      <canvas id="chart"></canvas>
+      <div class="metrics">
+        <div class="metric"><span>Preço</span><b id="price">—</b></div>
+        <div class="metric"><span>RSI</span><b id="rsi">—</b></div>
+        <div class="metric"><span>Tendência</span><b id="trend">—</b></div>
+      </div>
+    </section>
+
+    <aside class="card">
+      <div id="signalBox" class="signal wait"><div><div class="big" id="signal">AGUARDAR</div><div class="score">Força: <span id="score">—</span>/100</div></div></div>
+      <div class="checks" id="checks"></div>
+      <div class="note">A análise usa candles de mercado e indicadores técnicos. O feed público pode não ser idêntico às cotações da Bullex. A força é um índice técnico, não uma probabilidade garantida de lucro.</div>
+    </aside>
+  </div>
+
+  <section class="card log">
+    <h3 style="margin:0 0 8px">Histórico dos sinais</h3>
+    <div class="row head"><span>Hora</span><span>Sinal</span><span>Força</span><span>Candle</span></div>
+    <div id="history"></div>
+    <div class="note">O histórico registra apenas a análise deste aplicativo; ele não confirma resultado financeiro nem executa ordens.</div>
+  </section>
+</div>
+
+<script>
+const cvs=document.getElementById('chart'),ctx=cvs.getContext('2d');
+let candles=[], analysisCandles=[], history=[], lastLoad=0, lastSignalKey='';
+const API_BASE='https://biquote.io/api';
+const assetMap={'EUR/USD':'EURUSD','GBP/USD':'GBPUSD','USD/JPY':'USDJPY','BTC/USD':'BTCUSD'};
+const priceRanges={EURUSD:[0.1,10],GBPUSD:[0.1,10],USDJPY:[10,1000],BTCUSD:[100,1000000]};
+function assetSymbol(){return assetMap[document.getElementById('asset').value]}
+function loadInterval(){return document.getElementById('tf').value+'m'}
+function setStatus(text,cls){const el=document.getElementById('dataStatus');el.textContent=text;el.className='data-status '+cls}
+function showError(msg){const box=document.getElementById('errorBox');box.textContent=msg;box.style.display='block'}
+function hideError(){document.getElementById('errorBox').style.display='none'}
+function formatPrice(v,symbol){if(!Number.isFinite(v))return '—';if(symbol==='USDJPY')return v.toFixed(3);if(symbol==='BTCUSD')return v.toFixed(2);return v.toFixed(5)}
+function validateBars(data,symbol,interval){
+  if(!data||data.symbol!==symbol)throw new Error(`Símbolo inesperado recebido: ${data?.symbol||'desconhecido'}`);
+  if(data.interval!==interval)throw new Error(`Intervalo inesperado recebido: ${data?.interval||'desconhecido'}`);
+  if(!Array.isArray(data.bars)||data.bars.length<30)throw new Error('A API retornou poucos candles.');
+  const [lo,hi]=priceRanges[symbol];
+  const parsed=data.bars.map(b=>({o:Number(b.open),h:Number(b.high),l:Number(b.low),c:Number(b.close),t:b.openTime,open:Boolean(b.isOpen)}));
+  const valid=parsed.every(b=>[b.o,b.h,b.l,b.c].every(Number.isFinite)&&b.h>=Math.max(b.o,b.c)&&b.l<=Math.min(b.o,b.c)&&b.c>0);
+  if(!valid)throw new Error('A API retornou um candle inválido.');
+  const prices=parsed.map(b=>b.c); const median=[...prices].sort((a,b)=>a-b)[Math.floor(prices.length/2)];
+  if(median<lo||median>hi)throw new Error(`Preço recebido (${median}) não parece compatível com ${symbol}. Dados não foram exibidos.`);
+  return parsed.reverse();
+}
+async function loadRealData(){
+  const symbol=assetSymbol(),interval=loadInterval();
+  const url=`${API_BASE}/${symbol}/ohlc?interval=${interval}&limit=70`;
+  const response=await fetch(url,{cache:'no-store'});
+  if(!response.ok)throw new Error(`Falha HTTP ${response.status}`);
+  const data=await response.json();
+  const parsed=validateBars(data,symbol,interval);
+  candles=parsed;
+  analysisCandles=candles.filter(c=>!c.open);
+  if(analysisCandles.length<25)throw new Error('Ainda não há candles fechados suficientes para analisar.');
+
+  let tickPrice=null;
+  try{
+    const qr=await fetch(`${API_BASE}/${symbol}`,{cache:'no-store'});
+    if(qr.ok){const q=await qr.json();if(q.symbol===symbol&&Number.isFinite(Number(q.mid)))tickPrice=Number(q.mid)}
+  }catch(e){/* usa o candle se a cotação direta falhar */}
+
+  const displayPrice=tickPrice??analysisCandles.at(-1).c;
+  document.getElementById('sourceSymbol').textContent=symbol;
+  document.getElementById('sourceTf').textContent=interval;
+  document.getElementById('quotePrice').textContent=formatPrice(displayPrice,symbol);
+  lastLoad=Date.now(); hideError(); setStatus('● DADOS REAIS','live'); render(displayPrice,symbol); addHistory();
+}
+async function newData(){
+  setStatus('● ATUALIZANDO...','loading'); hideError();
+  try{await loadRealData()}
+  catch(err){setStatus('● ERRO AO CARREGAR','error');showError(err.message||'Não foi possível carregar os dados.');console.error(err)}
+}
+function ema(period,arr=analysisCandles){let k=2/(period+1),e=arr[0].c;for(let i=1;i<arr.length;i++)e=arr[i].c*k+e*(1-k);return e}
+function emaAt(i,p,arr=analysisCandles){let k=2/(p+1),e=arr[0].c;for(let j=1;j<=i;j++)e=arr[j].c*k+e*(1-k);return e}
+function calcRSI(period=14,arr=analysisCandles){if(arr.length<=period)return 50;let gains=0,loss=0;for(let i=arr.length-period;i<arr.length;i++){let d=arr[i].c-arr[i-1].c;if(d>0)gains+=d;else loss-=d}if(loss===0)return 100;return 100-(100/(1+gains/loss))}
+function analyze(){
+  const arr=analysisCandles,last=arr.at(-1),prev=arr.at(-2);let lastClose=last.c,e9=ema(9),e21=ema(21),r=calcRSI();let bull=0,bear=0;
+  if(e9>e21)bull+=20;else bear+=20;
+  if(lastClose>e9)bull+=20;else bear+=20;
+  if(r>55)bull+=15;else if(r<45)bear+=15;
+  if(last.c>last.o)bull+=15;else if(last.c<last.o)bear+=15;
+  if(last.c>prev.h)bull+=15;else if(last.c<prev.l)bear+=15;
+  const trend=e9>e21?'ALTA':e9<e21?'BAIXA':'LATERAL';
+  const signal=bull>=65&&bull>bear?'COMPRA':bear>=65&&bear>bull?'VENDA':'AGUARDAR';
+  const raw=Math.max(bull,bear);const score=Math.round(raw/85*100);
+  return {last,prev,e9,e21,r,trend,signal,score,bull,bear,raw}
+}
+function draw(){
+  const d=devicePixelRatio||1,w=cvs.clientWidth,h=cvs.clientHeight;cvs.width=w*d;cvs.height=h*d;ctx.setTransform(d,0,0,d,0,0);ctx.clearRect(0,0,w,h);
+  if(!candles.length)return;let min=Math.min(...candles.map(x=>x.l)),max=Math.max(...candles.map(x=>x.h));if(max===min){max+=1;min-=1}const pad=25;const denom=Math.max(1,candles.length-1);const y=v=>h-pad-(v-min)/(max-min)*(h-2*pad),x=i=>pad+i*(w-2*pad)/denom;
+  ctx.strokeStyle='#25304a';ctx.lineWidth=1;for(let j=0;j<5;j++){let yy=pad+j*(h-2*pad)/4;ctx.beginPath();ctx.moveTo(pad,yy);ctx.lineTo(w-pad,yy);ctx.stroke()}
+  candles.forEach((c,i)=>{let xx=x(i),cw=Math.max(3,(w-2*pad)/Math.max(100,candles.length*1.5));ctx.strokeStyle=c.c>=c.o?'#25d695':'#ff5b6e';ctx.fillStyle=ctx.strokeStyle;ctx.beginPath();ctx.moveTo(xx,y(c.h));ctx.lineTo(xx,y(c.l));ctx.stroke();let top=y(Math.max(c.o,c.c)),bh=Math.max(2,Math.abs(y(c.o)-y(c.c)));ctx.fillRect(xx-cw/2,top,cw,bh)});
+  ctx.strokeStyle='#f7c948';ctx.beginPath();candles.forEach((c,i)=>{let ai=analysisCandles.findIndex(z=>z.t===c.t);if(ai<0)return;let v=emaAt(ai,9),xx=x(i);if(i===0)ctx.moveTo(xx,y(v));else ctx.lineTo(xx,y(v))});ctx.stroke();
+  const openIndex=candles.findIndex(c=>c.open);if(openIndex>=0){ctx.setLineDash([4,4]);ctx.strokeStyle='#8e9ab3';ctx.beginPath();ctx.moveTo(x(openIndex),pad);ctx.lineTo(x(openIndex),h-pad);ctx.stroke();ctx.setLineDash([])}
+}
+function render(displayPrice,symbol){const a=analyze();draw();document.getElementById('price').textContent=formatPrice(displayPrice,symbol);document.getElementById('rsi').textContent=a.r.toFixed(1);document.getElementById('trend').textContent=a.trend;document.getElementById('signal').textContent=a.signal;document.getElementById('score').textContent=a.score;document.getElementById('signalBox').className='signal '+(a.signal==='COMPRA'?'buy':a.signal==='VENDA'?'sell':'wait');
+  const items=[['Tendência',a.trend!=='LATERAL',a.trend],['EMA 9/21',a.e9!==a.e21,a.e9>a.e21?'9 acima de 21':'9 abaixo de 21'],['RSI',a.r>55||a.r<45,a.r>55?'favorável à compra':a.r<45?'favorável à venda':'neutro'],['Candle fechado',a.last.c!==a.last.o,a.last.c>a.last.o?'alta':'baixa'],['Rompimento',a.bull>=15||a.bear>=15,a.bull>=15?'pressão compradora':a.bear>=15?'pressão vendedora':'sem confirmação']];
+  document.getElementById('checks').innerHTML=items.map(q=>`<div class="check"><span>${q[0]}</span><span class="${q[1]?'ok':'no'}">${q[1]?'✓':'✕'} ${q[2]}</span></div>`).join('');
+  return a
+}
+function addHistory(){const a=analyze();const key=(a.last.t||'')+a.signal;if(key===lastSignalKey)return;lastSignalKey=key;history.unshift({t:new Date().toLocaleTimeString('pt-BR'),s:a.signal,sc:a.score,c:a.last.c>a.last.o?'alta':'baixa'});history=history.slice(0,8);document.getElementById('history').innerHTML=history.map(x=>`<div class="row"><span>${x.t}</span><span>${x.s}</span><span>${x.sc}/100</span><span>${x.c}</span></div>`).join('')}
+document.getElementById('asset').addEventListener('change',newData);document.getElementById('tf').addEventListener('change',newData);window.addEventListener('resize',()=>{if(candles.length)draw()});newData();setInterval(()=>{if(Date.now()-lastLoad>12000)newData()},15000);
+</script>
+</body>
+</html>
