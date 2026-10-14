@@ -16,6 +16,7 @@ canvas{width:100%;height:420px;display:block;background:#0c1324;border-radius:10
 .metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}.metric{background:#0e1628;border-radius:9px;padding:10px}.metric b{display:block;font-size:18px}.metric span{font-size:11px;color:var(--muted)}
 .log{margin-top:14px}.row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;padding:9px;border-bottom:1px solid var(--line);font-size:12px}.row.head{color:var(--muted)}
 .note{color:var(--muted);font-size:11px;line-height:1.45;margin-top:12px}.errorbox{display:none;margin-top:10px;padding:10px;border-radius:9px;background:#2b1520;color:#ffb2bd;font-size:12px;line-height:1.4}
+.compare{margin:12px 0;padding:14px;border:1px solid var(--line);border-radius:12px;background:rgba(18,26,46,.94)}.compare h3{margin:0 0 8px;font-size:16px}.compare p{font-size:12px;color:var(--muted);line-height:1.45;margin:6px 0 12px}.compare-controls{display:flex;gap:8px;flex-wrap:wrap}.compare-controls input{min-width:0;flex:1;background:#0c1324;border:1px solid var(--line);color:var(--text);padding:10px;border-radius:9px}.compare-controls button{background:#18233b;border:1px solid var(--line);color:var(--text);padding:10px 12px;border-radius:9px}.compare-result{margin-top:10px;font-size:13px;font-weight:700}.compare-ok{color:var(--green)}.compare-bad{color:var(--red)}.compare-warn{color:var(--yellow)}
 @media(max-width:780px){.grid{grid-template-columns:1fr}.chartcard{min-height:0}canvas{height:330px}.top{align-items:flex-start;flex-direction:column}.controls{width:100%}.select,.btn{flex:1}}
 </style>
 </head>
@@ -34,6 +35,17 @@ canvas{width:100%;height:420px;display:block;background:#0c1324;border-radius:10
   <div class="source">Fonte: <b>Biquote</b> • Símbolo: <b id="sourceSymbol">—</b> • Intervalo: <b id="sourceTf">—</b> • Cotação: <b id="quotePrice">—</b></div>
   <div id="errorBox" class="errorbox"></div>
 
+  <section class="compare">
+    <h3>Validação com a Bullex</h3>
+    <p>Digite o preço que aparece agora no gráfico da Bullex para o mesmo ativo. O sinal ficará em AGUARDAR até validar a cotação. A comparação expira após 60 segundos; confira o mesmo ativo e o mesmo momento.</p>
+    <div class="compare-controls">
+      <input id="bullexPriceInput" type="number" min="0" step="any" inputmode="decimal" placeholder="Preço atual na Bullex" aria-label="Preço atual na Bullex">
+      <input id="maxDiffInput" type="number" min="0.01" max="10" step="0.01" value="0.25" aria-label="Diferença máxima permitida em porcentagem" title="Diferença máxima permitida (%)">
+      <button type="button" onclick="validateBullexQuote()">Validar cotação</button>
+    </div>
+    <div class="compare-result compare-warn" id="compareResult">AGUARDANDO COTAÇÃO DA BULLEX — sinais bloqueados.</div>
+  </section>
+
   <div class="grid">
     <section class="card chartcard">
       <canvas id="chart"></canvas>
@@ -47,7 +59,7 @@ canvas{width:100%;height:420px;display:block;background:#0c1324;border-radius:10
     <aside class="card">
       <div id="signalBox" class="signal wait"><div><div class="big" id="signal">AGUARDAR</div><div class="score">Força: <span id="score">—</span>/100</div></div></div>
       <div class="checks" id="checks"></div>
-      <div class="note">A análise usa candles de mercado e indicadores técnicos. O feed público pode não ser idêntico às cotações da Bullex. A força é um índice técnico, não uma probabilidade garantida de lucro.</div>
+      <div class="note">A análise usa candles de mercado e indicadores técnicos. O sinal só é liberado após comparação manual da cotação da Bullex com o feed externo. Mesmo cotações próximas não garantem candles idênticos nem lucro. A força é um índice técnico, não uma probabilidade de acerto.</div>
     </aside>
   </div>
 
@@ -61,7 +73,7 @@ canvas{width:100%;height:420px;display:block;background:#0c1324;border-radius:10
 
 <script>
 const cvs=document.getElementById('chart'),ctx=cvs.getContext('2d');
-let candles=[], analysisCandles=[], history=[], lastLoad=0, lastSignalKey='';
+let candles=[], analysisCandles=[], history=[], lastLoad=0, lastSignalKey='', bullexQuote=null, bullexQuoteAt=0, latestDisplayPrice=null, latestSymbol='';
 const API_BASE='https://biquote.io/api';
 const assetMap={'EUR/USD':'EURUSD','GBP/USD':'GBPUSD','USD/JPY':'USDJPY','BTC/USD':'BTCUSD'};
 const priceRanges={EURUSD:[0.1,10],GBPUSD:[0.1,10],USDJPY:[10,1000],BTCUSD:[100,1000000]};
@@ -101,6 +113,7 @@ async function loadRealData(){
   }catch(e){/* usa o candle se a cotação direta falhar */}
 
   const displayPrice=tickPrice??analysisCandles.at(-1).c;
+  latestDisplayPrice=displayPrice; latestSymbol=symbol;
   document.getElementById('sourceSymbol').textContent=symbol;
   document.getElementById('sourceTf').textContent=interval;
   document.getElementById('quotePrice').textContent=formatPrice(displayPrice,symbol);
@@ -134,13 +147,30 @@ function draw(){
   ctx.strokeStyle='#f7c948';ctx.beginPath();candles.forEach((c,i)=>{let ai=analysisCandles.findIndex(z=>z.t===c.t);if(ai<0)return;let v=emaAt(ai,9),xx=x(i);if(i===0)ctx.moveTo(xx,y(v));else ctx.lineTo(xx,y(v))});ctx.stroke();
   const openIndex=candles.findIndex(c=>c.open);if(openIndex>=0){ctx.setLineDash([4,4]);ctx.strokeStyle='#8e9ab3';ctx.beginPath();ctx.moveTo(x(openIndex),pad);ctx.lineTo(x(openIndex),h-pad);ctx.stroke();ctx.setLineDash([])}
 }
-function render(displayPrice,symbol){const a=analyze();draw();document.getElementById('price').textContent=formatPrice(displayPrice,symbol);document.getElementById('rsi').textContent=a.r.toFixed(1);document.getElementById('trend').textContent=a.trend;document.getElementById('signal').textContent=a.signal;document.getElementById('score').textContent=a.score;document.getElementById('signalBox').className='signal '+(a.signal==='COMPRA'?'buy':a.signal==='VENDA'?'sell':'wait');
-  const items=[['Tendência',a.trend!=='LATERAL',a.trend],['EMA 9/21',a.e9!==a.e21,a.e9>a.e21?'9 acima de 21':'9 abaixo de 21'],['RSI',a.r>55||a.r<45,a.r>55?'favorável à compra':a.r<45?'favorável à venda':'neutro'],['Candle fechado',a.last.c!==a.last.o,a.last.c>a.last.o?'alta':'baixa'],['Rompimento',a.bull>=15||a.bear>=15,a.bull>=15?'pressão compradora':a.bear>=15?'pressão vendedora':'sem confirmação']];
-  document.getElementById('checks').innerHTML=items.map(q=>`<div class="check"><span>${q[0]}</span><span class="${q[1]?'ok':'no'}">${q[1]?'✓':'✕'} ${q[2]}</span></div>`).join('');
-  return a
+function getQuoteValidation(){
+  const maxDiff=Number(document.getElementById('maxDiffInput').value);
+  if(!Number.isFinite(bullexQuote)||bullexQuote<=0||!bullexQuoteAt)return {ok:false,reason:'Informe a cotação da Bullex para liberar a comparação.',diff:null};
+  if(Date.now()-bullexQuoteAt>60000)return {ok:false,reason:'A cotação informada expirou. Digite o preço atual da Bullex novamente.',diff:null};
+  if(!Number.isFinite(latestDisplayPrice)||latestDisplayPrice<=0)return {ok:false,reason:'Ainda não há cotação externa válida.',diff:null};
+  if(!Number.isFinite(maxDiff)||maxDiff<0.01||maxDiff>10)return {ok:false,reason:'Defina uma diferença máxima entre 0,01% e 10%.',diff:null};
+  const diff=Math.abs(latestDisplayPrice-bullexQuote)/bullexQuote*100;
+  if(diff>maxDiff)return {ok:false,reason:`DIFERENÇA ALTA: ${diff.toFixed(3)}% (limite ${maxDiff.toFixed(2)}%). Sinal bloqueado.`,diff};
+  return {ok:true,reason:`Cotações próximas: diferença de ${diff.toFixed(3)}% (limite ${maxDiff.toFixed(2)}%). Validação válida por até 60 segundos.`,diff};
 }
-function addHistory(){const a=analyze();const key=(a.last.t||'')+a.signal;if(key===lastSignalKey)return;lastSignalKey=key;history.unshift({t:new Date().toLocaleTimeString('pt-BR'),s:a.signal,sc:a.score,c:a.last.c>a.last.o?'alta':'baixa'});history=history.slice(0,8);document.getElementById('history').innerHTML=history.map(x=>`<div class="row"><span>${x.t}</span><span>${x.s}</span><span>${x.sc}/100</span><span>${x.c}</span></div>`).join('')}
-document.getElementById('asset').addEventListener('change',newData);document.getElementById('tf').addEventListener('change',newData);window.addEventListener('resize',()=>{if(candles.length)draw()});newData();setInterval(()=>{if(Date.now()-lastLoad>12000)newData()},15000);
+function updateComparisonUI(validation){const el=document.getElementById('compareResult');el.textContent=validation.reason;el.className='compare-result '+(validation.ok?'compare-ok':(validation.diff!==null?'compare-bad':'compare-warn'));}
+function validateBullexQuote(){
+  const input=Number(document.getElementById('bullexPriceInput').value);
+  if(!Number.isFinite(input)||input<=0){bullexQuote=null;bullexQuoteAt=0;const v={ok:false,reason:'Digite um preço válido da Bullex maior que zero.',diff:null};updateComparisonUI(v);if(latestDisplayPrice!==null)render(latestDisplayPrice,latestSymbol);return;}
+  bullexQuote=input;bullexQuoteAt=Date.now();
+  if(latestDisplayPrice!==null){const v=getQuoteValidation();updateComparisonUI(v);render(latestDisplayPrice,latestSymbol);addHistory();}
+}
+function render(displayPrice,symbol){const a=analyze();const validation=getQuoteValidation();const effectiveSignal=validation.ok?a.signal:'AGUARDAR';draw();document.getElementById('price').textContent=formatPrice(displayPrice,symbol);document.getElementById('rsi').textContent=a.r.toFixed(1);document.getElementById('trend').textContent=a.trend;document.getElementById('signal').textContent=effectiveSignal;document.getElementById('score').textContent=validation.ok?a.score:'BLOQUEADO';document.getElementById('signalBox').className='signal '+(effectiveSignal==='COMPRA'?'buy':effectiveSignal==='VENDA'?'sell':'wait');updateComparisonUI(validation);
+  const items=[['Tendência',a.trend!=='LATERAL',a.trend],['EMA 9/21',a.e9!==a.e21,a.e9>a.e21?'9 acima de 21':'9 abaixo de 21'],['RSI',a.r>55||a.r<45,a.r>55?'favorável à compra':a.r<45?'favorável à venda':'neutro'],['Candle fechado',a.last.c!==a.last.o,a.last.c>a.last.o?'alta':'baixa'],['Rompimento',a.bull>=15||a.bear>=15,a.bull>=15?'pressão compradora':a.bear>=15?'pressão vendedora':'sem confirmação'],['Comparação Bullex',validation.ok,validation.ok?'preços dentro do limite':'sinal bloqueado']];
+  document.getElementById('checks').innerHTML=items.map(q=>`<div class="check"><span>${q[0]}</span><span class="${q[1]?'ok':(q[0]==='Comparação Bullex'?'warn':'no')}">${q[1]?'✓':'✕'} ${q[2]}</span></div>`).join('');
+  return {...a,signal:effectiveSignal,validation}
+}
+function addHistory(){const a=analyze(),v=getQuoteValidation(),signal=v.ok?a.signal:'AGUARDAR';const key=(a.last.t||'')+signal+(v.ok?'valid':'blocked');if(key===lastSignalKey)return;lastSignalKey=key;history.unshift({t:new Date().toLocaleTimeString('pt-BR'),s:signal,sc:v.ok?a.score:'BLOQ.',c:a.last.c>a.last.o?'alta':'baixa'});history=history.slice(0,8);document.getElementById('history').innerHTML=history.map(x=>`<div class="row"><span>${x.t}</span><span>${x.s}</span><span>${x.sc=== 'BLOQ.'?x.sc:x.sc+'/100'}</span><span>${x.c}</span></div>`).join('')}
+document.getElementById('asset').addEventListener('change',()=>{bullexQuote=null;bullexQuoteAt=0;document.getElementById('bullexPriceInput').value='';newData()});document.getElementById('tf').addEventListener('change',newData);window.addEventListener('resize',()=>{if(candles.length)draw()});newData();setInterval(()=>{if(Date.now()-lastLoad>12000)newData();if(bullexQuoteAt&&Date.now()-bullexQuoteAt>60000&&latestDisplayPrice!==null){render(latestDisplayPrice,latestSymbol);}},15000);
 </script>
 </body>
 </html>
