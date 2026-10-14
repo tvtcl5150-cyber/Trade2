@@ -106,13 +106,19 @@ async function loadRealData(){
   analysisCandles=candles.filter(c=>!c.open);
   if(analysisCandles.length<25)throw new Error('Ainda não há candles fechados suficientes para analisar.');
 
-  let tickPrice=null;
-  try{
-    const qr=await fetch(`${API_BASE}/${symbol}`,{cache:'no-store'});
-    if(qr.ok){const q=await qr.json();if(q.symbol===symbol&&Number.isFinite(Number(q.mid)))tickPrice=Number(q.mid)}
-  }catch(e){/* usa o candle se a cotação direta falhar */}
+  // Use somente o tick atual, nunca o fechamento de um candle como se fosse preço ao vivo.
+  // allowStale=false pede à API para não devolver uma cotação antiga.
+  const qr=await fetch(`${API_BASE}/${symbol}?allowStale=false`,{cache:'no-store'});
+  if(!qr.ok)throw new Error(`Cotação ao vivo indisponível (HTTP ${qr.status}). Sinais bloqueados até os dados atualizarem.`);
+  const q=await qr.json();
+  const tickPrice=Number(q.mid);
+  const quoteTime=Date.parse(q.timestamp||'');
+  const quoteAge=Number(q.quoteAgeSeconds);
+  if(q.symbol!==symbol||!Number.isFinite(tickPrice)||tickPrice<=0)throw new Error('A fonte externa retornou uma cotação inválida. Sinais bloqueados.');
+  if(q.stale===true||(Number.isFinite(quoteAge)&&quoteAge>90)||(Number.isFinite(quoteTime)&&Date.now()-quoteTime>90000))throw new Error('A cotação externa está desatualizada há mais de 90 segundos. Sinais bloqueados.');
+  if(!Number.isFinite(quoteTime))throw new Error('A fonte externa não informou o horário da cotação. Sinais bloqueados por segurança.');
 
-  const displayPrice=tickPrice??analysisCandles.at(-1).c;
+  const displayPrice=tickPrice;
   latestDisplayPrice=displayPrice; latestSymbol=symbol;
   document.getElementById('sourceSymbol').textContent=symbol;
   document.getElementById('sourceTf').textContent=interval;
@@ -122,7 +128,20 @@ async function loadRealData(){
 async function newData(){
   setStatus('● ATUALIZANDO...','loading'); hideError();
   try{await loadRealData()}
-  catch(err){setStatus('● ERRO AO CARREGAR','error');showError(err.message||'Não foi possível carregar os dados.');console.error(err)}
+  catch(err){
+    // Fail closed: um erro de feed nunca pode deixar um COMPRA/VENDA antigo na tela.
+    latestDisplayPrice=null;
+    document.getElementById('signal').textContent='AGUARDAR';
+    document.getElementById('score').textContent='BLOQUEADO';
+    document.getElementById('signalBox').className='signal wait';
+    document.getElementById('price').textContent='—';
+    const result=document.getElementById('compareResult');
+    result.textContent='Cotação ao vivo indisponível ou desatualizada. Sinal bloqueado até a atualização.';
+    result.className='compare-result compare-bad';
+    setStatus('● DADOS NÃO VALIDADOS','error');
+    showError(err.message||'Não foi possível validar a cotação. Sinais bloqueados.');
+    console.error(err)
+  }
 }
 function ema(period,arr=analysisCandles){let k=2/(period+1),e=arr[0].c;for(let i=1;i<arr.length;i++)e=arr[i].c*k+e*(1-k);return e}
 function emaAt(i,p,arr=analysisCandles){let k=2/(p+1),e=arr[0].c;for(let j=1;j<=i;j++)e=arr[j].c*k+e*(1-k);return e}
@@ -170,7 +189,7 @@ function render(displayPrice,symbol){const a=analyze();const validation=getQuote
   return {...a,signal:effectiveSignal,validation}
 }
 function addHistory(){const a=analyze(),v=getQuoteValidation(),signal=v.ok?a.signal:'AGUARDAR';const key=(a.last.t||'')+signal+(v.ok?'valid':'blocked');if(key===lastSignalKey)return;lastSignalKey=key;history.unshift({t:new Date().toLocaleTimeString('pt-BR'),s:signal,sc:v.ok?a.score:'BLOQ.',c:a.last.c>a.last.o?'alta':'baixa'});history=history.slice(0,8);document.getElementById('history').innerHTML=history.map(x=>`<div class="row"><span>${x.t}</span><span>${x.s}</span><span>${x.sc=== 'BLOQ.'?x.sc:x.sc+'/100'}</span><span>${x.c}</span></div>`).join('')}
-document.getElementById('asset').addEventListener('change',()=>{bullexQuote=null;bullexQuoteAt=0;document.getElementById('bullexPriceInput').value='';newData()});document.getElementById('tf').addEventListener('change',newData);window.addEventListener('resize',()=>{if(candles.length)draw()});newData();setInterval(()=>{if(Date.now()-lastLoad>12000)newData();if(bullexQuoteAt&&Date.now()-bullexQuoteAt>60000&&latestDisplayPrice!==null){render(latestDisplayPrice,latestSymbol);}},15000);
+document.getElementById('asset').addEventListener('change',()=>{bullexQuote=null;bullexQuoteAt=0;latestDisplayPrice=null;document.getElementById('bullexPriceInput').value='';document.getElementById('signal').textContent='AGUARDAR';document.getElementById('score').textContent='BLOQUEADO';document.getElementById('signalBox').className='signal wait';newData()});document.getElementById('tf').addEventListener('change',newData);window.addEventListener('resize',()=>{if(candles.length)draw()});newData();setInterval(()=>{if(Date.now()-lastLoad>12000)newData();if(bullexQuoteAt&&Date.now()-bullexQuoteAt>60000&&latestDisplayPrice!==null){render(latestDisplayPrice,latestSymbol);}},15000);
 </script>
 </body>
 </html>
