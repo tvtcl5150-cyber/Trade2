@@ -36,14 +36,14 @@ canvas{width:100%;height:420px;display:block;background:#0c1324;border-radius:10
   <div id="errorBox" class="errorbox"></div>
 
   <section class="compare">
-    <h3>Validação com a Bullex</h3>
-    <p>Digite o preço que aparece agora no gráfico da Bullex para o mesmo ativo. O sinal ficará em AGUARDAR até validar a cotação. A comparação expira após 60 segundos; confira o mesmo ativo e o mesmo momento.</p>
+    <h3>Validação com a IQ Option</h3>
+    <p>Digite o preço que aparece agora no gráfico da IQ Option para o mesmo ativo. A comparação é apenas informativa e não bloqueia COMPRA/VENDA. Confira o mesmo ativo e o mesmo momento; a cotação externa pode divergir da IQ Option.</p>
     <div class="compare-controls">
-      <input id="bullexPriceInput" type="number" min="0" step="any" inputmode="decimal" placeholder="Preço atual na Bullex" aria-label="Preço atual na Bullex">
+      <input id="bullexPriceInput" type="number" min="0" step="any" inputmode="decimal" placeholder="Preço atual na IQ Option" aria-label="Preço atual na IQ Option">
       <input id="maxDiffInput" type="number" min="0.01" max="10" step="0.01" value="0.25" aria-label="Diferença máxima permitida em porcentagem" title="Diferença máxima permitida (%)">
       <button type="button" onclick="validateBullexQuote()">Validar cotação</button>
     </div>
-    <div class="compare-result compare-warn" id="compareResult">AGUARDANDO COTAÇÃO DA BULLEX — sinais bloqueados.</div>
+    <div class="compare-result compare-warn" id="compareResult">Comparação opcional — os sinais não dependem desta validação.</div>
   </section>
 
   <div class="grid">
@@ -59,7 +59,7 @@ canvas{width:100%;height:420px;display:block;background:#0c1324;border-radius:10
     <aside class="card">
       <div id="signalBox" class="signal wait"><div><div class="big" id="signal">AGUARDAR</div><div class="score">Força: <span id="score">—</span>/100</div></div></div>
       <div class="checks" id="checks"></div>
-      <div class="note">A análise usa candles de mercado e indicadores técnicos. O sinal só é liberado após comparação manual da cotação da Bullex com o feed externo. Mesmo cotações próximas não garantem candles idênticos nem lucro. A força é um índice técnico, não uma probabilidade de acerto.</div>
+      <div class="note">A análise usa candles e indicadores técnicos de uma fonte externa (Biquote), não um feed direto da IQ Option. A comparação de preços é opcional e não bloqueia os sinais. Divergências entre plataformas podem ocorrer; sinal técnico não garante lucro. A força é um índice técnico, não uma probabilidade de acerto.</div>
     </aside>
   </div>
 
@@ -132,13 +132,13 @@ async function newData(){
     // Fail closed: um erro de feed nunca pode deixar um COMPRA/VENDA antigo na tela.
     latestDisplayPrice=null;
     document.getElementById('signal').textContent='AGUARDAR';
-    document.getElementById('score').textContent='BLOQUEADO';
+    document.getElementById('score').textContent='—';
     document.getElementById('signalBox').className='signal wait';
     document.getElementById('price').textContent='—';
     const result=document.getElementById('compareResult');
     result.textContent='Cotação ao vivo indisponível ou desatualizada. Sinal bloqueado até a atualização.';
     result.className='compare-result compare-bad';
-    setStatus('● DADOS NÃO VALIDADOS','error');
+    setStatus('● FEED INDISPONÍVEL','error');
     showError(err.message||'Não foi possível validar a cotação. Sinais bloqueados.');
     console.error(err)
   }
@@ -168,8 +168,8 @@ function draw(){
 }
 function getQuoteValidation(){
   const maxDiff=Number(document.getElementById('maxDiffInput').value);
-  if(!Number.isFinite(bullexQuote)||bullexQuote<=0||!bullexQuoteAt)return {ok:false,reason:'Informe a cotação da Bullex para liberar a comparação.',diff:null};
-  if(Date.now()-bullexQuoteAt>60000)return {ok:false,reason:'A cotação informada expirou. Digite o preço atual da Bullex novamente.',diff:null};
+  if(!Number.isFinite(bullexQuote)||bullexQuote<=0||!bullexQuoteAt)return {ok:false,reason:'Informe a cotação da IQ Option para liberar a comparação.',diff:null};
+  if(Date.now()-bullexQuoteAt>60000)return {ok:false,reason:'A cotação informada expirou. Digite o preço atual da IQ Option novamente.',diff:null};
   if(!Number.isFinite(latestDisplayPrice)||latestDisplayPrice<=0)return {ok:false,reason:'Ainda não há cotação externa válida.',diff:null};
   if(!Number.isFinite(maxDiff)||maxDiff<0.01||maxDiff>10)return {ok:false,reason:'Defina uma diferença máxima entre 0,01% e 10%.',diff:null};
   const diff=Math.abs(latestDisplayPrice-bullexQuote)/bullexQuote*100;
@@ -179,17 +179,17 @@ function getQuoteValidation(){
 function updateComparisonUI(validation){const el=document.getElementById('compareResult');el.textContent=validation.reason;el.className='compare-result '+(validation.ok?'compare-ok':(validation.diff!==null?'compare-bad':'compare-warn'));}
 function validateBullexQuote(){
   const input=Number(document.getElementById('bullexPriceInput').value);
-  if(!Number.isFinite(input)||input<=0){bullexQuote=null;bullexQuoteAt=0;const v={ok:false,reason:'Digite um preço válido da Bullex maior que zero.',diff:null};updateComparisonUI(v);if(latestDisplayPrice!==null)render(latestDisplayPrice,latestSymbol);return;}
+  if(!Number.isFinite(input)||input<=0){bullexQuote=null;bullexQuoteAt=0;const v={ok:false,reason:'Digite um preço válido da IQ Option maior que zero.',diff:null};updateComparisonUI(v);if(latestDisplayPrice!==null)render(latestDisplayPrice,latestSymbol);return;}
   bullexQuote=input;bullexQuoteAt=Date.now();
   if(latestDisplayPrice!==null){const v=getQuoteValidation();updateComparisonUI(v);render(latestDisplayPrice,latestSymbol);addHistory();}
 }
-function render(displayPrice,symbol){const a=analyze();const validation=getQuoteValidation();const effectiveSignal=validation.ok?a.signal:'AGUARDAR';draw();document.getElementById('price').textContent=formatPrice(displayPrice,symbol);document.getElementById('rsi').textContent=a.r.toFixed(1);document.getElementById('trend').textContent=a.trend;document.getElementById('signal').textContent=effectiveSignal;document.getElementById('score').textContent=validation.ok?a.score:'BLOQUEADO';document.getElementById('signalBox').className='signal '+(effectiveSignal==='COMPRA'?'buy':effectiveSignal==='VENDA'?'sell':'wait');updateComparisonUI(validation);
-  const items=[['Tendência',a.trend!=='LATERAL',a.trend],['EMA 9/21',a.e9!==a.e21,a.e9>a.e21?'9 acima de 21':'9 abaixo de 21'],['RSI',a.r>55||a.r<45,a.r>55?'favorável à compra':a.r<45?'favorável à venda':'neutro'],['Candle fechado',a.last.c!==a.last.o,a.last.c>a.last.o?'alta':'baixa'],['Rompimento',a.bull>=15||a.bear>=15,a.bull>=15?'pressão compradora':a.bear>=15?'pressão vendedora':'sem confirmação'],['Comparação Bullex',validation.ok,validation.ok?'preços dentro do limite':'sinal bloqueado']];
-  document.getElementById('checks').innerHTML=items.map(q=>`<div class="check"><span>${q[0]}</span><span class="${q[1]?'ok':(q[0]==='Comparação Bullex'?'warn':'no')}">${q[1]?'✓':'✕'} ${q[2]}</span></div>`).join('');
-  return {...a,signal:effectiveSignal,validation}
+function render(displayPrice,symbol){const a=analyze();const validation=getQuoteValidation();draw();document.getElementById('price').textContent=formatPrice(displayPrice,symbol);document.getElementById('rsi').textContent=a.r.toFixed(1);document.getElementById('trend').textContent=a.trend;document.getElementById('signal').textContent=a.signal;document.getElementById('score').textContent=a.score;document.getElementById('signalBox').className='signal '+(a.signal==='COMPRA'?'buy':a.signal==='VENDA'?'sell':'wait');updateComparisonUI(validation);
+  const items=[['Tendência',a.trend!=='LATERAL',a.trend],['EMA 9/21',a.e9!==a.e21,a.e9>a.e21?'9 acima de 21':'9 abaixo de 21'],['RSI',a.r>55||a.r<45,a.r>55?'favorável à compra':a.r<45?'favorável à venda':'neutro'],['Candle fechado',a.last.c!==a.last.o,a.last.c>a.last.o?'alta':'baixa'],['Rompimento',a.bull>=15||a.bear>=15,a.bull>=15?'pressão compradora':a.bear>=15?'pressão vendedora':'sem confirmação'],['Comparação IQ Option',validation.ok,validation.ok?'preços dentro do limite':(validation.diff!==null?'diferença acima do limite':'não informada (opcional)')]];
+  document.getElementById('checks').innerHTML=items.map(q=>`<div class="check"><span>${q[0]}</span><span class="${q[1]?'ok':(q[0]==='Comparação IQ Option'?'warn':'no')}">${q[1]?'✓':'✕'} ${q[2]}</span></div>`).join('');
+  return {...a,validation}
 }
-function addHistory(){const a=analyze(),v=getQuoteValidation(),signal=v.ok?a.signal:'AGUARDAR';const key=(a.last.t||'')+signal+(v.ok?'valid':'blocked');if(key===lastSignalKey)return;lastSignalKey=key;history.unshift({t:new Date().toLocaleTimeString('pt-BR'),s:signal,sc:v.ok?a.score:'BLOQ.',c:a.last.c>a.last.o?'alta':'baixa'});history=history.slice(0,8);document.getElementById('history').innerHTML=history.map(x=>`<div class="row"><span>${x.t}</span><span>${x.s}</span><span>${x.sc=== 'BLOQ.'?x.sc:x.sc+'/100'}</span><span>${x.c}</span></div>`).join('')}
-document.getElementById('asset').addEventListener('change',()=>{bullexQuote=null;bullexQuoteAt=0;latestDisplayPrice=null;document.getElementById('bullexPriceInput').value='';document.getElementById('signal').textContent='AGUARDAR';document.getElementById('score').textContent='BLOQUEADO';document.getElementById('signalBox').className='signal wait';newData()});document.getElementById('tf').addEventListener('change',newData);window.addEventListener('resize',()=>{if(candles.length)draw()});newData();setInterval(()=>{if(Date.now()-lastLoad>12000)newData();if(bullexQuoteAt&&Date.now()-bullexQuoteAt>60000&&latestDisplayPrice!==null){render(latestDisplayPrice,latestSymbol);}},15000);
+function addHistory(){const a=analyze(),signal=a.signal;const key=(a.last.t||'')+signal;if(key===lastSignalKey)return;lastSignalKey=key;history.unshift({t:new Date().toLocaleTimeString('pt-BR'),s:signal,sc:a.score,c:a.last.c>a.last.o?'alta':'baixa'});history=history.slice(0,8);document.getElementById('history').innerHTML=history.map(x=>`<div class="row"><span>${x.t}</span><span>${x.s}</span><span>${x.sc}/100</span><span>${x.c}</span></div>`).join('')}
+document.getElementById('asset').addEventListener('change',()=>{bullexQuote=null;bullexQuoteAt=0;latestDisplayPrice=null;document.getElementById('bullexPriceInput').value='';document.getElementById('signal').textContent='AGUARDAR';document.getElementById('score').textContent='—';document.getElementById('signalBox').className='signal wait';newData()});document.getElementById('tf').addEventListener('change',newData);window.addEventListener('resize',()=>{if(candles.length)draw()});newData();setInterval(()=>{if(Date.now()-lastLoad>12000)newData();},15000);
 </script>
 </body>
 </html>
